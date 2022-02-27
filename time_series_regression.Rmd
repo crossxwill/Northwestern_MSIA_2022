@@ -1,0 +1,469 @@
+---
+title: "Intro to Time Series Regression"
+author: "William Chiu"
+date: "2/23/2022"
+output:
+  powerpoint_presentation:
+    reference_doc: william_template.pptx
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+options(digits=3)
+
+library(tidyverse)
+library(broom)
+library(broom.mixed)
+library(np)
+library(nlme)
+library(lmtest)
+library(sandwich)
+library(purrr)
+library(furrr)
+
+future::plan(multisession, workers=3)
+
+Ksim <- 1000
+boot_samp <- 1000
+```
+
+## About Me
+
+- MSIA Class of 2013
+- Works for a bank
+- Team develops models to explain and forecast:
+  - Credit Losses
+  - Loan Prepayments
+  - Mortgage Rates
+  - Deposit Attrition
+- Primarily uses SQL and R
+
+
+## Time Series Regression
+
+* Time series is data collected in equally-spaced time intervals.
+
+* Linear regression estimates the linear relationship between a continuous response (`y`) and one or more predictors (`x`).
+
+* Ordinary least squares (OLS) is the most common implementation of linear regression, and estimates the coefficients that minimize the error sum of squares:
+
+$ESS = \sum_{i=1}^{n}{\left ( y_i - (\widehat{\beta_0} + \widehat{\beta_1}X_{1,i} + ... + \widehat{\beta_p}X_{p,i}) \right )^2}$
+
+* Using linear regression on time series is called time series regression.
+
+
+
+
+## OLS Assumptions for Time Series
+
+* Population data generating process (dgp) most suitable for OLS: 
+
+<br>
+
+$y_t = \beta_0 + \beta_1X_{1,t} + ... + \beta_pX_{p,t} + \varepsilon_t$
+
+$\varepsilon_t \sim \mathcal{N}(0, \sigma^2)$
+
+<br>
+
+* Linear parameters
+
+* Independent errors (no serial correlation)
+
+* Normally distributed errors
+
+* Equal variance errors (homoscedasticity)
+
+* Stationary errors
+
+## Violation: Serial Correlation
+
+* Unfortunately, the data generating process (dgp) for time series often violates the independent errors assumption. For example:
+
+<br>
+
+$y_t = \beta_0 + \beta_1X_{1,t} + ... + \beta_pX_{p,t} + \varepsilon_t$
+
+$\varepsilon_t = \rho\varepsilon_{t-1} + v_t$
+
+$v_t \sim \mathcal{N}(0, \sigma^2)$
+
+<br>
+
+* If $\rho=0$, then there is no serial correlation. 
+
+* If $-1<\rho<1$, then there is serial correlation. 
+
+## Simulate predictors with serial correlation
+
+```{r, echo=TRUE}
+set.seed(2013) 
+
+x1 <- arima.sim(list(order = c(1,0,0), ar = 0.6), n = 200, sd=2, mean=2)
+x2 <- arima.sim(list(order = c(1,0,0), ar = -0.6), n = 200, sd=3, mean=2)
+x3 <- arima.sim(list(order = c(1,0,0), ar = 0.6), n = 200, sd=4, mean=2)
+```
+
+## Simulate response with serial correlation
+
+```{r, echo=TRUE}
+epsilon <- arima.sim(list(order = c(1,0,0), ar = 0.6), n = 200, sd=5, mean=0)
+
+y <- 10 + 3.5*x1 - 1.5*x2 + epsilon 
+## x3 is not part of the dgp
+
+df <- data.frame(y=y, x1=x1, x2=x2, x3=x3, t=1:length(y))
+```
+
+## Plot simulated data (first 50 obs)
+
+```{r, warning=FALSE, message=FALSE, fig.width = 14,fig.height = 7}
+
+cbbPalette <- c("#E69F00", "#56B4E9", "#009E73", "#000000", "#F0E442",
+                "#0072B2", "#D55E00", "#CC79A7")
+
+df_plot <- df %>% 
+  slice_head(n=50) %>% # first 50 obs
+  pivot_longer(-t, "variable", "value") %>% 
+  arrange(desc(variable), t) # preserve time order
+
+ggplot(df_plot, aes(x=t, y=value, color=variable)) +
+  geom_line(size=2) +
+  theme_bw(base_size=28) +
+  scale_colour_manual(values=cbbPalette)
+
+```
+
+## Split between train and test
+
+```{r, echo=TRUE}
+train <- head(df, 150)
+test <- tail(df, 50)
+```
+
+## OLS ignores serial correlation
+
+:::::::::::::: {.columns}
+::: {.column}
+* Under serial correlation, OLS parameter estimates are unbiased and consistent
+* However, standard errors are incorrect
+* And p-values are incorrect
+* `x3` should *not* be statistically significant
+:::
+::: {.column}
+```{r}
+
+lm_mod <- lm(y ~ x1 + x2 + x3, data=train)
+
+knitr::kable(tidy(lm_mod))
+```
+:::
+::::::::::::::
+
+## Detecting serial correlation
+
+:::::::::::::: {.columns}
+::: {.column}
+* Durbin-Watson test is a popular test for serial correlation, but suffers from some major drawbacks. 
+
+* Breusch-Godfrey Test is a better test.
+:::
+::: {.column}
+```{r}
+knitr::kable(tidy(bgtest(lm_mod)), digits=28, caption="Null Hypothesis: No serial correlation")
+```
+:::
+::::::::::::::
+
+
+## Remediating serial correlation
+
+* Replace OLS with GLS
+* Keep OLS but estimate robust (HAC) standard errors
+* Keep OLS but bootstrap the standard errors
+
+## Generalized Least Squares (Cochrane–Orcutt)
+
+:::::::::::::: {.columns}
+::: {.column}
+1. Estimate $\rho$
+2. Transform each response and predictor into "partial differences" (e.g., $y_t - \widehat{\rho}y_{t-1}$)
+3. Estimate the transformed model using OLS
+4. Re-calculate the coefficient estimates in terms of the original training data
+:::
+::: {.column}
+```{r, message=FALSE, warning=FALSE}
+
+gls_mod <- gls(y ~ x1 + x2 + x3, data=train, correlation=corARMA(p=1, q=0), method="ML")
+
+knitr::kable(tidy(gls_mod))
+```
+:::
+::::::::::::::
+
+
+
+
+
+
+## Newey-West HAC Correction
+
+:::::::::::::: {.columns}
+::: {.column}
+* Keep OLS but estimate robust (HAC) standard errors
+
+:::
+::: {.column}
+```{r, message=FALSE, warning=FALSE}
+nw <- coeftest(lm_mod, vcov=NeweyWest)
+
+knitr::kable(tidy(nw ## Newey-West correction
+))
+```
+:::
+::::::::::::::
+
+
+
+
+
+## Andrews HAC Correction
+
+:::::::::::::: {.columns}
+::: {.column}
+* Keep OLS but estimate robust (HAC) standard errors
+
+:::
+::: {.column}
+```{r, message=FALSE, warning=FALSE}
+andrews <- coeftest(lm_mod, vcov=kernHAC)
+
+knitr::kable(tidy(andrews ## Andrews correction
+))
+
+```
+:::
+::::::::::::::
+
+
+## Block Bootstrap
+
+
+:::::::::::::: {.columns}
+::: {.column}
+* Keep the OLS coefficient estimates but *bootstrap* the standard errors
+* Break the time series into sequential blocks (non-random)
+* Randomly sample blocks with replacement
+* Unfortunately, results are sensitive to block size
+
+:::
+::: {.column}
+```{r, message=FALSE, warning=FALSE}
+even_blocksize <- which(nrow(train) %% c(1:nrow(train))==0)
+
+optimal_blocksize <- max(b.star(lm_mod$residuals))
+    
+optimal_blocksize <- even_blocksize[which.min(abs(even_blocksize - optimal_blocksize))]
+
+nbrClusters <- nrow(train)/optimal_blocksize
+
+clusterID <- rep(seq(nbrClusters),each=optimal_blocksize)
+
+set.seed(1)
+
+blockboot <- coeftest(lm_mod, vcov=vcovBS, cluster=clusterID, R=boot_samp)
+knitr::kable(tidy(blockboot
+))
+```
+:::
+::::::::::::::
+
+## Test Set Performance (Ex-post, OLS vs. GLS)
+
+```{r, fig.width = 14,fig.height = 7}
+ols_pred <- predict(lm_mod, newdata=test)
+gls_pred <- predict(gls_mod, newdata=test)
+
+test_plot <- test
+
+test_plot$ols <- ols_pred
+test_plot$gls <- gls_pred
+
+test_plot <- test_plot %>% 
+  select(t, y, ols, gls) %>% 
+  pivot_longer(-t, "variable", "value") %>% 
+  arrange(variable, t)
+
+cbbPalette2 <- c("#E69F00", "#56B4E9", "#000000", "#009E73", "#F0E442",
+                 "#0072B2", "#D55E00", "#CC79A7")
+
+ggplot(test_plot, aes(x=t, y=value, color=variable, lty=variable)) +
+  geom_line(size=1.5) +
+  theme_bw(base_size=28) +
+  scale_colour_manual(values=cbbPalette2) +
+  scale_linetype_manual(values=c("dotted","dashed","solid"))
+```
+
+
+## Inference is harder than prediction
+
+* Test set performance appears similar between OLS and GLS
+
+* However, the p-values for `x3` differ substantially by method: `lm`, `gls`, `newey-west`, `andrews`, `bootstrap`.
+
+* The p-values from simulated data are *sensitive* to the random seeds
+
+* In order to measure the quality of the methods: re-simulate the training data ($K = `r Ksim`$) with varying seeds and $\rho$, then measure how often Type 1 errors occur ($\alpha=0.10$).
+
+* Since $\beta_3 = 0$ in the simulation, any p-values <= $\alpha$ is a Type 1 Error
+
+## Type 1 Error Frequency
+
+:::::::::::::: {.columns}
+::: {.column}
+```{r, message=FALSE, warning=FALSE}
+doOneSimulation <- function(randomSeed=2013, alpha=0.10, rho=0.6) {
+  set.seed(randomSeed) 
+  
+  x1 <- arima.sim(list(order = c(1,0,0), ar = rho), n = 200, sd=2, mean=2)
+  x2 <- arima.sim(list(order = c(1,0,0), ar = rho*-1), n = 200, sd=3, mean=2)
+  x3 <- arima.sim(list(order = c(1,0,0), ar = rho), n = 200, sd=4, mean=2)
+  
+  epsilon <- arima.sim(list(order = c(1,0,0), ar = rho), n = 200, sd=5, mean=0)
+  
+  y <- 10 + 3.5*x1 - 1.5*x2 + epsilon 
+  ## x3 is not part of the dgp
+  
+  df <- data.frame(y=y, x1=x1, x2=x2, x3=x3, t=1:length(y))
+  
+  train <- head(df, 150)
+  test <- tail(df, 50)
+  
+  lm_mod <- lm(y ~ x1 + x2 + x3, data=train)
+  
+  gls_mod <- gls(y ~ x1 + x2 + x3, data=train, correlation=corARMA(p=1, q=0), method="ML")
+  
+  nw <- coeftest(lm_mod, vcov=NeweyWest)
+  
+  andrews <- coeftest(lm_mod, vcov=kernHAC)
+  
+  even_blocksize <- which(nrow(train) %% c(1:nrow(train))==0)
+  
+  optimal_blocksize <- max(b.star(lm_mod$residuals))
+      
+  optimal_blocksize <- even_blocksize[which.min(abs(even_blocksize - optimal_blocksize))]
+  
+  nbrClusters <- nrow(train)/optimal_blocksize
+  
+  clusterID <- rep(seq(nbrClusters),each=optimal_blocksize)
+  
+  set.seed(1)
+  
+  blockboot <- coeftest(lm_mod, vcov=vcovBS, cluster=clusterID, R=boot_samp)
+  
+  all_models <- list(lm=lm_mod, gls=gls_mod, nw=nw, andrews=andrews, bootstrap=blockboot)
+  
+  df_of_models <- map_dfr(all_models, tidy, .id="method")
+  
+  out <- df_of_models %>% 
+    filter(term == "x3") %>% 
+    mutate(Type1ErrorFlag = `p.value` <= alpha)
+  
+  return(out)
+}
+
+a <- Sys.time()
+
+allSimulations <- map_dfr(c(`1-Low`=0.1, `2-Moderate`=0.6, `3-High`=0.99),
+                          ~ future_map_dfr(1:Ksim, doOneSimulation, rho=.x, .options =
+                                             furrr_options(packages=c("broom", "broom.mixed"),
+                                                           seed=NULL)),
+                          .id="rho")
+
+b <- Sys.time()
+c <- difftime(b, a, units="mins")
+
+tbl <- allSimulations %>% 
+  group_by(rho, method) %>% 
+  summarize(Prob_Type_1_Error = mean(Type1ErrorFlag), .groups = 'drop') %>% 
+  arrange(rho, Prob_Type_1_Error) 
+
+knitr::kable(head(tbl,5), digits=3)
+```
+
+:::
+::: {.column}
+
+```{r}
+knitr::kable(tbl[6:10,], digits=3)
+```
+:::
+::::::::::::::
+
+
+
+
+
+
+
+## High Serial Correlation
+
+:::::::::::::: {.columns}
+::: {.column}
+
+* Under high serial correlation, most of the previous methods struggle to return the correct p-values.
+
+* If $\widehat{\rho}$ is close to -1 or 1, then check for non-stationary errors (e.g., Phillips-Ouliaris Cointegration Test).
+
+:::
+::: {.column}
+```{r}
+knitr::kable(tail(tbl,5), digits=3)
+
+```
+:::
+::::::::::::::
+
+
+## Violation: Non-stationary errors
+
+* When $\rho=1$ or $\rho=-1$, the errors are non-stationary.
+
+<br>
+
+$\varepsilon_t = \rho\varepsilon_{t-1} + v_t$
+
+<br>
+
+* Under non-stationary errors, OLS and GLS are both biased and inconsistent (i.e., spurious)
+
+* Non-stationary errors adversely affect *both* prediction and inference (while serially correlated errors affect only inference)
+
+## Remediating non-stationary errors
+
+1. Transform each response and predictor into "first differences" (e.g., $y_t - y_{t-1}$)
+2. Estimate the transformed model using OLS or GLS
+3. Forecast with the last historical value and the cumulative sum of the predicted first differences:
+  
+$\widehat{y_{t+h}} = y_t + \sum_{i=t+1}^{t+h}{\widehat{\Delta{y_i}}}$
+
+## Conclusions
+
+* OLS is most suitable for independent errors
+
+* The independent error assumption is often violated with time series regression
+
+* Under serial correlation, standard errors and p-values from OLS are unreliable
+
+* Remediating serial correlation:
+  - GLS
+  - OLS with HAC standard errors
+  - OLS with block bootstrapped standard errors
+  
+* Fortunately, OLS coefficient estimates remain unbiased and consistent
+
+
+
