@@ -23,6 +23,7 @@ library(lmtest)
 library(sandwich)
 library(purrr)
 library(furrr)
+library(ModelMetrics)
 
 future::plan(multisession, workers=3)
 
@@ -316,7 +317,11 @@ ggplot(test_plot, aes(x=t, y=value, color=variable, lty=variable)) +
 
 * The p-values from simulated data are *sensitive* to the random seeds
 
-* In order to measure the quality of the methods: re-simulate the training data ($K = `r Ksim`$) with varying seeds and $\rho$, then measure how often Type 1 errors occur ($\alpha=0.10$).
+* In order to measure the quality of the methods: 
+
+   1. Re-simulate the training data ($K = `r Ksim`$) with varying seeds and $\rho$
+   2. Measure how often Type 1 errors occur ($\alpha=0.10$)
+   3. Measure test set error
 
 * Since $\beta_3 = 0$ in the simulation, any p-values <= $\alpha$ is a Type 1 Error
 
@@ -372,12 +377,34 @@ doOneSimulation <- function(randomSeed=2013, alpha=0.10, rho=0.6) {
     filter(term == "x3") %>% 
     mutate(Type1ErrorFlag = `p.value` <= alpha)
   
+  ## test set performance
+  
+  ols_pred <- predict(lm_mod, newdata=test)
+  gls_pred <- predict(gls_mod, newdata=test)
+  
+  test_plot <- test
+  
+  test_plot$ols <- ols_pred
+  test_plot$gls <- gls_pred
+  
+  test_rmse_lm <- data.frame(method='lm', Test_RMSE = rmse(actual=test_plot$y,
+                                                           predicted=test_plot$ols))
+  test_rmse_gls <- data.frame(method='gls', Test_RMSE = rmse(actual=test_plot$y,
+                                                             predicted=test_plot$gls))
+  
+  test_rmse <- bind_rows(test_rmse_lm, test_rmse_gls)
+  
+  ## merge results
+  
+  out <- out %>% 
+    left_join(test_rmse, by="method")
+
   return(out)
 }
 
 a <- Sys.time()
 
-allSimulations <- map_dfr(c(`1-Low`=0.1, `2-Moderate`=0.6, `3-High`=0.99),
+allSimulations <- map_dfr(c(`1-Low (0.1)`=0.1, `2-High (0.7)`=0.7, `3-Very High (0.99)`=0.99),
                           ~ future_map_dfr(1:Ksim, doOneSimulation, rho=.x, .options =
                                              furrr_options(packages=c("broom", "broom.mixed"),
                                                            seed=NULL)),
@@ -386,9 +413,13 @@ allSimulations <- map_dfr(c(`1-Low`=0.1, `2-Moderate`=0.6, `3-High`=0.99),
 b <- Sys.time()
 c <- difftime(b, a, units="mins")
 
+future:::ClusterRegistry("stop")
+
 tbl <- allSimulations %>% 
   group_by(rho, method) %>% 
-  summarize(Prob_Type_1_Error = mean(Type1ErrorFlag), .groups = 'drop') %>% 
+  summarize(Prob_Type_1_Error = mean(Type1ErrorFlag),
+            Avg_Test_RMSE = mean(Test_RMSE),
+            .groups = 'drop') %>% 
   arrange(rho, Prob_Type_1_Error) 
 
 knitr::kable(head(tbl,5), digits=3)
@@ -409,12 +440,12 @@ knitr::kable(tbl[6:10,], digits=3)
 
 
 
-## High Serial Correlation
+## Very High Serial Correlation
 
 :::::::::::::: {.columns}
 ::: {.column}
 
-* Under high serial correlation, most of the previous methods struggle to return the correct p-values.
+* Under very high serial correlation, most of the previous methods struggle to return the correct p-values.
 
 * If $\widehat{\rho}$ is close to -1 or 1, then check for non-stationary errors (e.g., Phillips-Ouliaris Cointegration Test).
 
@@ -458,12 +489,14 @@ $\widehat{y_{t+h}} = y_t + \sum_{i=t+1}^{t+h}{\widehat{\Delta{y_i}}}$
 
 * Under serial correlation, standard errors and p-values from OLS are unreliable
 
+* Fortunately, OLS coefficient estimates remain unbiased and consistent
+
 * Remediating serial correlation:
   - GLS
   - OLS with HAC standard errors
   - OLS with block bootstrapped standard errors
   
-* Fortunately, OLS coefficient estimates remain unbiased and consistent
+* Under non-stationary errors, beware of spurious regressions
 
 
 
