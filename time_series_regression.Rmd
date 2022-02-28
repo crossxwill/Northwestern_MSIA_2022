@@ -321,7 +321,7 @@ ggplot(test_plot, aes(x=t, y=value, color=variable, lty=variable)) +
 
    1. Re-simulate the training data ($K = `r Ksim`$) with varying seeds and $\rho$
    2. Measure how often Type 1 errors occur ($\alpha=0.10$)
-   3. Measure test set error
+   3. Measure test set error (i.e., average MSE over K simulations, then take the square root)
 
 * Since $\beta_3 = 0$ in the simulation, any p-values <= $\alpha$ is a Type 1 Error
 
@@ -387,24 +387,24 @@ doOneSimulation <- function(randomSeed=2013, alpha=0.10, rho=0.6) {
   test_plot$ols <- ols_pred
   test_plot$gls <- gls_pred
   
-  test_rmse_lm <- data.frame(method='lm', Test_RMSE = rmse(actual=test_plot$y,
+  test_mse_lm <- data.frame(method='lm', Test_MSE = mse(actual=test_plot$y,
                                                            predicted=test_plot$ols))
-  test_rmse_gls <- data.frame(method='gls', Test_RMSE = rmse(actual=test_plot$y,
+  test_mse_gls <- data.frame(method='gls', Test_MSE = mse(actual=test_plot$y,
                                                              predicted=test_plot$gls))
   
-  test_rmse <- bind_rows(test_rmse_lm, test_rmse_gls)
+  test_mse <- bind_rows(test_mse_lm, test_mse_gls)
   
   ## merge results
   
   out <- out %>% 
-    left_join(test_rmse, by="method")
+    left_join(test_mse, by="method")
 
   return(out)
 }
 
 a <- Sys.time()
 
-allSimulations <- map_dfr(c(`1-Low (0.1)`=0.1, `2-High (0.7)`=0.7, `3-Very High (0.99)`=0.99),
+allSimulations <- map_dfr(c(`1-Low (0.1)`=0.1, `2-Moderate (0.7)`=0.7, `3-Very High (0.9)`=0.9),
                           ~ future_map_dfr(1:Ksim, doOneSimulation, rho=.x, .options =
                                              furrr_options(packages=c("broom", "broom.mixed"),
                                                            seed=NULL)),
@@ -418,7 +418,7 @@ future:::ClusterRegistry("stop")
 tbl <- allSimulations %>% 
   group_by(rho, method) %>% 
   summarize(Prob_Type_1_Error = mean(Type1ErrorFlag),
-            Avg_Test_RMSE = mean(Test_RMSE),
+            Avg_Test_RMSE = sqrt(mean(Test_MSE)),
             .groups = 'drop') %>% 
   arrange(rho, Prob_Type_1_Error) 
 
@@ -434,9 +434,13 @@ knitr::kable(tbl[6:10,], digits=3)
 :::
 ::::::::::::::
 
+## Test Set RMSE
 
+$$RMSE_{test} = \sqrt[ ]{\sigma_{\varepsilon}^2} = \sqrt[ ]{ \frac{\sigma_v^2}{1- \rho^2} }$$
 
+<br>
 
+The Pennsylvania State University. (2018). 10.3 - Regression with Autoregressive Errors. Applied Regression Analysis. Retrieved February 27, 2022, from https://online.stat.psu.edu/stat462/node/189/ 
 
 
 
@@ -447,7 +451,7 @@ knitr::kable(tbl[6:10,], digits=3)
 
 * Under very high serial correlation, most of the previous methods struggle to return the correct p-values.
 
-* If $\widehat{\rho}$ is close to -1 or 1, then check for non-stationary errors (e.g., Phillips-Ouliaris Cointegration Test).
+* If $\widehat{\rho}$ is close to -1 or 1, then check for non-stationary errors (e.g., Phillips-Ouliaris Cointegration Test; Pesaran-Shin-Smith Cointegration Test).
 
 :::
 ::: {.column}
@@ -461,7 +465,7 @@ knitr::kable(tail(tbl,5), digits=3)
 
 ## Violation: Non-stationary errors
 
-* When $\rho=1$ or $\rho=-1$, the errors are non-stationary.
+* When $\rho=1$ or $\rho=-1$, the errors are non-stationary (i.e. "random walk").
 
 <br>
 
@@ -472,6 +476,114 @@ $\varepsilon_t = \rho\varepsilon_{t-1} + v_t$
 * Under non-stationary errors, OLS and GLS are both biased and inconsistent (i.e., spurious)
 
 * Non-stationary errors adversely affect *both* prediction and inference (while serially correlated errors affect only inference)
+
+## Simulate non-stationary predictors
+
+
+```{r, echo=TRUE}
+set.seed(2013) 
+
+w1 <- arima.sim(list(order = c(0,1,0)), n = 200, sd=2, mean=2)
+w2 <- arima.sim(list(order = c(0,1,0)), n = 200, sd=3, mean=2)
+w3 <- arima.sim(list(order = c(0,1,0)), n = 200, sd=4, mean=2)
+```
+
+## Simulate non-stationary response
+
+* Suppose $z_t$ is a random walk and does **not** depend on any predictors
+
+$$z_t = z_{t-1} + v_t$$
+$$v_t \sim \mathcal{N}(0, \sigma^2)$$
+
+* The predictors $w_1$, $w_2$, $w_3$ should not affect $z_t$
+
+<br>
+
+```{r, echo=TRUE}
+z <- arima.sim(list(order = c(0,1,0)), n = 200, sd=5, mean=0)
+
+## w1, w2, w3 are not part of the dgp (and z is a random walk)
+
+df_nonstationary <- data.frame(z=z, w1=w1, w2=w2, w3=w3, t=1:length(z))
+```
+
+
+
+## Plot simulated data (first 50 obs)
+
+```{r, warning=FALSE, message=FALSE, fig.width = 14,fig.height = 7}
+
+cbbPalette <- c("#E69F00", "#56B4E9", "#009E73", "#000000", "#F0E442",
+                "#0072B2", "#D55E00", "#CC79A7")
+
+df_plot_ns <- df_nonstationary %>% 
+  slice_head(n=50) %>% # first 50 obs
+  pivot_longer(-t, "variable", "value") %>% 
+  arrange(desc(variable), t) # preserve time order
+
+ggplot(df_plot_ns, aes(x=t, y=value, color=variable)) +
+  geom_line(size=2) +
+  theme_bw(base_size=28) +
+  scale_colour_manual(values=cbbPalette)
+
+```
+
+## Split between train and test
+
+```{r, echo=TRUE}
+train_ns <- head(df_nonstationary, 150)
+test_ns <- tail(df_nonstationary, 52) # helps with plotting
+```
+
+## OLS ignores non-stationary errors
+
+
+:::::::::::::: {.columns}
+::: {.column}
+```{r}
+lm_mod_ns <- lm(z ~ w1 + w2 + w3, data=train_ns)
+
+knitr::kable(tidy(lm_mod_ns))
+```
+:::
+::: {.column}
+```{r}
+knitr::kable(glance(lm_mod_ns)[,1:2])
+```
+:::
+::::::::::::::
+
+## Test Set Error Explodes
+
+```{r, fig.width = 14,fig.height = 7}
+gls_mod_ns <- gls(z ~ w1 + w2 + w3, data=train_ns, correlation=corARMA(p=1, q=0), method="ML")
+
+ols_pred_ns <- predict(lm_mod_ns, newdata=test_ns)
+gls_pred_ns <- predict(gls_mod_ns, newdata=test_ns)
+rw <- rep(tail(train_ns$z,1), nrow(test_ns))
+
+test_plot_ns <- test_ns
+
+test_plot_ns$ols <- ols_pred_ns
+test_plot_ns$gls <- gls_pred_ns
+test_plot_ns$rw <- rw
+
+test_plot_ns <- test_plot_ns %>% 
+  select(t, z, ols, gls, rw) %>% 
+  pivot_longer(-t, "variable", "value") %>% 
+  arrange(variable, t)
+
+cbbPalette2 <- c("#E69F00", "#56B4E9", "#009E73", "#000000", "#F0E442",
+                 "#0072B2", "#D55E00", "#CC79A7")
+
+ggplot(test_plot_ns, aes(x=t, y=value, color=variable, lty=variable)) +
+  geom_line(size=1.5) +
+  theme_bw(base_size=28) +
+  scale_colour_manual(values=cbbPalette2) +
+  scale_linetype_manual(values=c("dotted","dashed","dotted", "solid"))
+```
+
+
 
 ## Remediating non-stationary errors
 
