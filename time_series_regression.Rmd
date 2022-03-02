@@ -119,7 +119,7 @@ y <- 10 + 3.5*x1 - 1.5*x2 + epsilon
 df <- data.frame(y=y, x1=x1, x2=x2, x3=x3, t=1:length(y))
 ```
 
-## Plot simulated data (first 50 obs)
+## Plot simulated data (Train)
 
 ```{r, warning=FALSE, message=FALSE, fig.width = 14,fig.height = 7}
 
@@ -127,7 +127,7 @@ cbbPalette <- c("#E69F00", "#56B4E9", "#009E73", "#000000", "#F0E442",
                 "#0072B2", "#D55E00", "#CC79A7")
 
 df_plot <- df %>% 
-  slice_head(n=50) %>% # first 50 obs
+  slice_head(n=150) %>% # first 150 obs
   pivot_longer(-t, "variable", "value") %>% 
   arrange(desc(variable), t) # preserve time order
 
@@ -434,15 +434,6 @@ knitr::kable(tbl[6:10,], digits=3)
 :::
 ::::::::::::::
 
-## Test Set RMSE
-
-$$RMSE_{test} = \sqrt[ ]{\sigma_{\varepsilon}^2} = \sqrt[ ]{ \frac{\sigma_v^2}{1- \rho^2} }$$
-
-<br>
-
-The Pennsylvania State University. (2018). 10.3 - Regression with Autoregressive Errors. Applied Regression Analysis. Retrieved February 27, 2022, from https://online.stat.psu.edu/stat462/node/189/ 
-
-
 
 ## Very High Serial Correlation
 
@@ -461,6 +452,20 @@ knitr::kable(tail(tbl,5), digits=3)
 ```
 :::
 ::::::::::::::
+
+
+
+
+
+## Test Set RMSE
+
+$$RMSE_{test} = \sqrt[ ]{\sigma_{\varepsilon}^2} = \sqrt[ ]{ \frac{\sigma_v^2}{1- \rho^2} }$$
+
+<br>
+
+The Pennsylvania State University. (2018). 10.3 - Regression with Autoregressive Errors. Applied Regression Analysis. Retrieved February 27, 2022, from https://online.stat.psu.edu/stat462/node/189/ 
+
+
 
 
 ## Violation: Non-stationary errors
@@ -509,7 +514,7 @@ df_nonstationary <- data.frame(z=z, w1=w1, w2=w2, w3=w3, t=1:length(z))
 
 
 
-## Plot simulated data (first 50 obs)
+## Plot simulated data (Train)
 
 ```{r, warning=FALSE, message=FALSE, fig.width = 14,fig.height = 7}
 
@@ -517,7 +522,7 @@ cbbPalette <- c("#E69F00", "#56B4E9", "#009E73", "#000000", "#F0E442",
                 "#0072B2", "#D55E00", "#CC79A7")
 
 df_plot_ns <- df_nonstationary %>% 
-  slice_head(n=50) %>% # first 50 obs
+  slice_head(n=150) %>% # first 150 obs
   pivot_longer(-t, "variable", "value") %>% 
   arrange(desc(variable), t) # preserve time order
 
@@ -582,6 +587,124 @@ ggplot(test_plot_ns, aes(x=t, y=value, color=variable, lty=variable)) +
   scale_colour_manual(values=cbbPalette2) +
   scale_linetype_manual(values=c("dotted","dashed","dotted", "solid"))
 ```
+
+## Non-stationarity is a very big problem
+
+:::::::::::::: {.columns}
+::: {.column}
+
+* Simulate $K = `r Ksim`$ data sets where the response and predictors are independent random walks (non-stationary)
+
+* OLS inferences are highly unreliable
+
+* OLS and GLS both perform worse than a naive model (i.e., take the last response from the training set and assume the response never changes in the test set)
+
+:::
+::: {.column}
+
+```{r}
+doOneSimulationNS <- function(randomSeed=2013, alpha=0.10) {
+  set.seed(randomSeed) 
+  
+  w1 <- arima.sim(list(order = c(0,1,0)), n = 200, sd=2, mean=2)
+  w2 <- arima.sim(list(order = c(0,1,0)), n = 200, sd=3, mean=2)
+  w3 <- arima.sim(list(order = c(0,1,0)), n = 200, sd=4, mean=2)
+  
+  z <- arima.sim(list(order = c(0,1,0)), n = 200, sd=5, mean=0)
+  
+  ## w1, w2, w3 are not part of the dgp (and z is a random walk)
+  
+  df_nonstationary <- data.frame(z=z, w1=w1, w2=w2, w3=w3, t=1:length(z))
+  
+  trainNS <- head(df_nonstationary, 150)
+  testNS <- tail(df_nonstationary, 50)
+  
+  lm_mod_ns <- lm(z ~ w1 + w2 + w3, data=trainNS)
+    
+  gls_mod_ns <- gls(z ~ w1 + w2 + w3, data=trainNS, correlation=corARMA(p=1, q=0), method="ML")
+
+  nw <- coeftest(lm_mod_ns, vcov=NeweyWest)
+  
+  andrews <- coeftest(lm_mod_ns, vcov=kernHAC)
+  
+  even_blocksize <- which(nrow(trainNS) %% c(1:nrow(trainNS))==0)
+  
+  optimal_blocksize <- max(b.star(lm_mod_ns$residuals))
+      
+  optimal_blocksize <- even_blocksize[which.min(abs(even_blocksize - optimal_blocksize))]
+  
+  nbrClusters <- nrow(trainNS)/optimal_blocksize
+  
+  clusterIDns <- rep(seq(nbrClusters),each=optimal_blocksize)
+  
+  set.seed(1)
+  
+  blockboot <- coeftest(lm_mod_ns, vcov=vcovBS, cluster=clusterIDns, R=boot_samp)
+  
+  all_models <- list(lm=lm_mod_ns, gls=gls_mod_ns, nw=nw, andrews=andrews, bootstrap=blockboot)
+  
+  df_of_models <- map_dfr(all_models, tidy, .id="method")
+  
+  out <- df_of_models %>% 
+    filter(term == "w3") %>% 
+    mutate(Type1ErrorFlag = `p.value` <= alpha)
+  
+  rw_df <- data.frame(method="rw", Type1ErrorFlag=0)
+  
+  out <- bind_rows(out, rw_df)
+  
+  ## test set performance
+  
+  ols_pred <- predict(lm_mod_ns, newdata=testNS)
+  gls_pred <- predict(gls_mod_ns, newdata=testNS)
+  rw_pred <- rep(tail(trainNS$z,1), nrow(testNS))
+  
+  test_plot <- testNS
+  
+  test_plot$ols <- ols_pred
+  test_plot$gls <- gls_pred
+  test_plot$rw <- rw_pred
+  
+  test_mse_lm <- data.frame(method='lm', Test_MSE = mse(actual=test_plot$z,
+                                                           predicted=test_plot$ols))
+  test_mse_gls <- data.frame(method='gls', Test_MSE = mse(actual=test_plot$z,
+                                                             predicted=test_plot$gls))
+  test_mse_rw <- data.frame(method='rw', Test_MSE = mse(actual=test_plot$z,
+                                                             predicted=test_plot$rw))
+  
+  test_mse <- bind_rows(test_mse_lm, test_mse_gls, test_mse_rw)
+  
+  ## merge results
+  
+  out <- out %>% 
+    left_join(test_mse, by="method")
+
+  return(out)
+}
+
+a <- Sys.time()
+
+allSimulationsNS <- future_map_dfr(1:Ksim, doOneSimulationNS, .options =
+                                             furrr_options(packages=c("broom", "broom.mixed"),
+                                                           seed=NULL))
+
+b <- Sys.time()
+c <- difftime(b, a, units="mins")
+
+future:::ClusterRegistry("stop")
+
+tblNS <- allSimulationsNS %>% 
+  group_by(method) %>% 
+  summarize(Prob_Type_1_Error = mean(Type1ErrorFlag),
+            Avg_Test_RMSE = sqrt(mean(Test_MSE)),
+            .groups = 'drop') %>% 
+  arrange(Prob_Type_1_Error) 
+
+knitr::kable(tblNS, digits=3)
+```
+
+:::
+::::::::::::::
 
 
 
