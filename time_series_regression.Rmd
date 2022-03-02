@@ -529,7 +529,9 @@ df_plot_ns <- df_nonstationary %>%
 ggplot(df_plot_ns, aes(x=t, y=value, color=variable)) +
   geom_line(size=2) +
   theme_bw(base_size=28) +
-  scale_colour_manual(values=cbbPalette)
+  scale_colour_manual(values=cbbPalette) +
+  facet_wrap(variable ~ ., scales="free_y") +
+  theme(legend.position = "None")
 
 ```
 
