@@ -25,7 +25,7 @@ library(purrr)
 library(furrr)
 library(ModelMetrics)
 
-future::plan(multisession, workers=3)
+future::plan(multisession, workers=2)
 
 Ksim <- 1000
 boot_samp <- 1000
@@ -33,34 +33,30 @@ boot_samp <- 1000
 
 ## About Me
 
-- MSIA Class of 2013
-- Works for a bank
-- Team develops models to explain and forecast:
-  - Credit Losses
-  - Loan Prepayments
-  - Mortgage Rates
-  - Deposit Attrition
-- Primarily uses SQL and R
-
+-   MSIA Class of 2013
+-   Works for a bank
+-   Team develops models to explain and forecast:
+    -   Credit Losses
+    -   Loan Prepayments
+    -   Mortgage Rates
+    -   Deposit Attrition
+-   Primarily uses SQL and R
 
 ## Time Series Regression
 
-* Time series is data collected in equally-spaced time intervals.
+-   Time series is data collected in equally-spaced time intervals.
 
-* Linear regression estimates the linear relationship between a continuous response (`y`) and one or more predictors (`x`).
+-   Linear regression estimates the linear relationship between a continuous response (`y`) and one or more predictors (`x`).
 
-* Ordinary least squares (OLS) is the most common implementation of linear regression, and estimates the coefficients that minimize the error sum of squares:
+-   Ordinary least squares (OLS) is the most common implementation of linear regression, and estimates the coefficients that minimize the error sum of squares:
 
 $ESS = \sum_{i=1}^{n}{\left ( y_i - (\widehat{\beta_0} + \widehat{\beta_1}X_{1,i} + ... + \widehat{\beta_p}X_{p,i}) \right )^2}$
 
-* Using linear regression on time series is called time series regression.
-
-
-
+-   Using linear regression on time series is called time series regression.
 
 ## OLS Assumptions for Time Series
 
-* Population data generating process (dgp) most suitable for OLS: 
+-   Population data generating process (dgp) most suitable for OLS:
 
 <br>
 
@@ -70,19 +66,19 @@ $\varepsilon_t \sim \mathcal{N}(0, \sigma^2)$
 
 <br>
 
-* Linear parameters
+-   Linear parameters
 
-* Independent errors (no serial correlation)
+-   Independent errors (no serial correlation)
 
-* Normally distributed errors
+-   Normally distributed errors
 
-* Equal variance errors (homoscedasticity)
+-   Equal variance errors (homoscedasticity)
 
-* Stationary errors
+-   Stationary response and predictors (unless there is co-integration)
 
 ## Violation: Serial Correlation
 
-* Unfortunately, the data generating process (dgp) for time series often violates the independent errors assumption. For example:
+-   Unfortunately, the data generating process (dgp) for time series often violates the independent errors assumption. For example:
 
 <br>
 
@@ -94,9 +90,9 @@ $v_t \sim \mathcal{N}(0, \sigma^2)$
 
 <br>
 
-* If $\rho=0$, then there is no serial correlation. 
+-   If $\rho=0$, then there is no serial correlation.
 
-* If $-1<\rho<1$, then there is serial correlation. 
+-   If $-1<\rho<1$, then there is serial correlation.
 
 ## Simulate predictors with serial correlation
 
@@ -147,14 +143,15 @@ test <- tail(df, 50)
 
 ## OLS ignores serial correlation
 
-:::::::::::::: {.columns}
-::: {.column}
-* Under serial correlation, OLS parameter estimates are unbiased and consistent
-* However, standard errors are incorrect
-* And p-values are incorrect
-* `x3` should *not* be statistically significant
+::: columns
+::: column
+-   Under serial correlation, OLS parameter estimates are unbiased and consistent
+-   However, standard errors are incorrect
+-   And p-values are incorrect
+-   `x3` should *not* be statistically significant
 :::
-::: {.column}
+
+::: column
 ```{r}
 
 lm_mod <- lm(y ~ x1 + x2 + x3, data=train)
@@ -162,40 +159,41 @@ lm_mod <- lm(y ~ x1 + x2 + x3, data=train)
 knitr::kable(tidy(lm_mod))
 ```
 :::
-::::::::::::::
+:::
 
 ## Detecting serial correlation
 
-:::::::::::::: {.columns}
-::: {.column}
-* Durbin-Watson test is a popular test for serial correlation, but suffers from some major drawbacks. 
+::: columns
+::: column
+-   Durbin-Watson test is a popular test for serial correlation, but suffers from some major drawbacks.
 
-* Breusch-Godfrey Test is a better test.
+-   Breusch-Godfrey Test is a better test.
 :::
-::: {.column}
+
+::: column
 ```{r}
 knitr::kable(tidy(bgtest(lm_mod)), digits=28, caption="Null Hypothesis: No serial correlation")
 ```
 :::
-::::::::::::::
-
+:::
 
 ## Remediating serial correlation
 
-* Replace OLS with GLS
-* Keep OLS but estimate robust (HAC) standard errors
-* Keep OLS but bootstrap the standard errors
+-   Replace OLS with GLS
+-   Keep OLS but estimate robust (HAC) standard errors
+-   Keep OLS but bootstrap the standard errors
 
-## Generalized Least Squares (Cochrane–Orcutt)
+## Generalized Least Squares (Cochrane--Orcutt)
 
-:::::::::::::: {.columns}
-::: {.column}
-1. Estimate $\rho$
-2. Transform each response and predictor into "partial differences" (e.g., $y_t - \widehat{\rho}y_{t-1}$)
-3. Estimate the transformed model using OLS
-4. Re-calculate the coefficient estimates in terms of the original training data
+::: columns
+::: column
+1.  Estimate $\rho$
+2.  Transform each response and predictor into "partial differences" (e.g., $y_t - \widehat{\rho}y_{t-1}$)
+3.  Estimate the transformed model using OLS
+4.  Re-calculate the coefficient estimates in terms of the original training data
 :::
-::: {.column}
+
+::: column
 ```{r, message=FALSE, warning=FALSE}
 
 gls_mod <- gls(y ~ x1 + x2 + x3, data=train, correlation=corARMA(p=1, q=0), method="ML")
@@ -203,21 +201,16 @@ gls_mod <- gls(y ~ x1 + x2 + x3, data=train, correlation=corARMA(p=1, q=0), meth
 knitr::kable(tidy(gls_mod))
 ```
 :::
-::::::::::::::
-
-
-
-
-
+:::
 
 ## Newey-West HAC Correction
 
-:::::::::::::: {.columns}
-::: {.column}
-* Keep OLS but estimate robust (HAC) standard errors
-
+::: columns
+::: column
+-   Keep OLS but estimate robust (HAC) standard errors
 :::
-::: {.column}
+
+::: column
 ```{r, message=FALSE, warning=FALSE}
 nw <- coeftest(lm_mod, vcov=NeweyWest)
 
@@ -225,20 +218,16 @@ knitr::kable(tidy(nw ## Newey-West correction
 ))
 ```
 :::
-::::::::::::::
-
-
-
-
+:::
 
 ## Andrews HAC Correction
 
-:::::::::::::: {.columns}
-::: {.column}
-* Keep OLS but estimate robust (HAC) standard errors
-
+::: columns
+::: column
+-   Keep OLS but estimate robust (HAC) standard errors
 :::
-::: {.column}
+
+::: column
 ```{r, message=FALSE, warning=FALSE}
 andrews <- coeftest(lm_mod, vcov=kernHAC)
 
@@ -247,21 +236,19 @@ knitr::kable(tidy(andrews ## Andrews correction
 
 ```
 :::
-::::::::::::::
-
+:::
 
 ## Block Bootstrap
 
-
-:::::::::::::: {.columns}
-::: {.column}
-* Keep the OLS coefficient estimates but *bootstrap* the standard errors
-* Break the time series into sequential blocks (non-random)
-* Randomly sample blocks with replacement
-* Unfortunately, results are sensitive to block size
-
+::: columns
+::: column
+-   Keep the OLS coefficient estimates but *bootstrap* the standard errors
+-   Break the time series into sequential blocks (non-random)
+-   Randomly sample blocks with replacement
+-   Unfortunately, results are sensitive to block size
 :::
-::: {.column}
+
+::: column
 ```{r, message=FALSE, warning=FALSE}
 even_blocksize <- which(nrow(train) %% c(1:nrow(train))==0)
 
@@ -280,7 +267,7 @@ knitr::kable(tidy(blockboot
 ))
 ```
 :::
-::::::::::::::
+:::
 
 ## Test Set Performance (Ex-post, OLS vs. GLS)
 
@@ -308,27 +295,26 @@ ggplot(test_plot, aes(x=t, y=value, color=variable, lty=variable)) +
   scale_linetype_manual(values=c("dotted","dashed","solid"))
 ```
 
-
 ## Inference is harder than prediction
 
-* Test set performance appears similar between OLS and GLS
+-   Test set performance appears similar between OLS and GLS
 
-* However, the p-values for `x3` differ substantially by method: `lm`, `gls`, `newey-west`, `andrews`, `bootstrap`.
+-   However, the p-values for `x3` differ substantially by method: `lm`, `gls`, `newey-west`, `andrews`, `bootstrap`.
 
-* The p-values from simulated data are *sensitive* to the random seeds
+-   The p-values from simulated data are *sensitive* to the random seeds
 
-* In order to measure the quality of the methods: 
+-   In order to measure the quality of the methods:
 
-   1. Re-simulate the training data ($K = `r Ksim`$) with varying seeds and $\rho$
-   2. Measure how often Type 1 errors occur ($\alpha=0.10$)
-   3. Measure test set error (i.e., average MSE over K simulations, then take the square root)
+    1.  Re-simulate the training data ($K = `r Ksim`$) with varying seeds and $\rho$
+    2.  Measure how often Type 1 errors occur ($\alpha=0.10$)
+    3.  Measure test set error (i.e., average MSE over K simulations, then take the square root)
 
-* Since $\beta_3 = 0$ in the simulation, any p-values <= $\alpha$ is a Type 1 Error
+-   Since $\beta_3 = 0$ in the simulation, any p-values \<= $\alpha$ is a Type 1 Error
 
 ## Type 1 Error Frequency
 
-:::::::::::::: {.columns}
-::: {.column}
+::: columns
+::: column
 ```{r, message=FALSE, warning=FALSE}
 doOneSimulation <- function(randomSeed=2013, alpha=0.10, rho=0.6) {
   set.seed(randomSeed) 
@@ -387,10 +373,10 @@ doOneSimulation <- function(randomSeed=2013, alpha=0.10, rho=0.6) {
   test_plot$ols <- ols_pred
   test_plot$gls <- gls_pred
   
-  test_mse_lm <- data.frame(method='lm', Test_MSE = mse(actual=test_plot$y,
-                                                           predicted=test_plot$ols))
-  test_mse_gls <- data.frame(method='gls', Test_MSE = mse(actual=test_plot$y,
-                                                             predicted=test_plot$gls))
+  test_mse_lm <- data.frame(method='lm', Test_MSE = mse(actual=test_plot$y, predicted=test_plot$ols),
+                            Train_MSE = mse(actual=train$y, predicted=lm_mod$fitted.values))
+  test_mse_gls <- data.frame(method='gls', Test_MSE = mse(actual=test_plot$y, predicted=test_plot$gls),
+                             Train_MSE = mse(actual=train$y, predicted=gls_mod$fitted))
   
   test_mse <- bind_rows(test_mse_lm, test_mse_gls)
   
@@ -418,72 +404,62 @@ future:::ClusterRegistry("stop")
 tbl <- allSimulations %>% 
   group_by(rho, method) %>% 
   summarize(Prob_Type_1_Error = mean(Type1ErrorFlag),
+            Avg_Train_RMSE = sqrt(mean(Train_MSE)),
             Avg_Test_RMSE = sqrt(mean(Test_MSE)),
             .groups = 'drop') %>% 
   arrange(rho, Prob_Type_1_Error) 
 
 knitr::kable(head(tbl,5), digits=3)
 ```
-
 :::
-::: {.column}
 
+::: column
 ```{r}
 knitr::kable(tbl[6:10,], digits=3)
 ```
 :::
-::::::::::::::
-
+:::
 
 ## Very High Serial Correlation
 
-:::::::::::::: {.columns}
-::: {.column}
+::: columns
+::: column
+-   Under very high serial correlation, most of the previous methods struggle to return the correct p-values.
 
-* Under very high serial correlation, most of the previous methods struggle to return the correct p-values.
+-   If $\widehat{\rho}$ is close to -1 or 1, then check for non-stationary residuals (e.g., Phillips-Ouliaris Cointegration Test; Pesaran-Shin-Smith Cointegration Test).
 
-* If $\widehat{\rho}$ is close to -1 or 1, then check for non-stationary errors (e.g., Phillips-Ouliaris Cointegration Test; Pesaran-Shin-Smith Cointegration Test).
-
+-   Non-stationary residuals could be a strong sign of spurious regression
 :::
-::: {.column}
+
+::: column
 ```{r}
 knitr::kable(tail(tbl,5), digits=3)
 
 ```
 :::
-::::::::::::::
+:::
 
-
-
-
-
-## Test Set RMSE
+## Serial Correlation and Test Set RMSE
 
 $$RMSE_{test} = \sqrt[ ]{\sigma_{\varepsilon}^2} = \sqrt[ ]{ \frac{\sigma_v^2}{1- \rho^2} }$$
 
 <br>
 
-The Pennsylvania State University. (2018). 10.3 - Regression with Autoregressive Errors. Applied Regression Analysis. Retrieved February 27, 2022, from https://online.stat.psu.edu/stat462/node/189/ 
+The Pennsylvania State University. (2018). 10.3 - Regression with Autoregressive Errors. Applied Regression Analysis. Retrieved February 27, 2022, from <https://online.stat.psu.edu/stat462/node/189/>
 
+## Violation: Non-stationary response and predictors
 
+-   The data generating process (dgp) for time series is often non-stationary. For example, $z_t$ and $w_t$ are independent random walks:
 
-
-## Violation: Non-stationary errors
-
-* When $\rho=1$ or $\rho=-1$, the errors are non-stationary (i.e. "random walk").
-
-<br>
-
-$\varepsilon_t = \rho\varepsilon_{t-1} + v_t$
+$$z_t = z_{t-1} + v_t$$ $$v_t \sim \mathcal{N}(0, \sigma_v^2)$$ $$w_t = w_{t-1} + e_t$$ $$e_t \sim \mathcal{N}(c, \sigma_e^2)$$
 
 <br>
 
-* Under non-stationary errors, OLS and GLS are both biased and inconsistent (i.e., spurious)
+-   When the response and predictors are non-stationary, OLS and GLS could be biased and inconsistent (i.e., spurious) -- except in the case of cointegration
 
-* Non-stationary errors adversely affect *both* prediction and inference (while serially correlated errors affect only inference)
+-   Non-stationary errors adversely affect *both* prediction and inference (while serially correlated errors affect only inference)
 
 ## Simulate non-stationary predictors
-
 
 ```{r, echo=TRUE}
 set.seed(2013) 
@@ -495,12 +471,11 @@ w3 <- arima.sim(list(order = c(0,1,0)), n = 200, sd=4, mean=2)
 
 ## Simulate non-stationary response
 
-* Suppose $z_t$ is a random walk and does **not** depend on any predictors
+-   Suppose $z_t$ is a random walk and does **not** depend on any predictors
 
-$$z_t = z_{t-1} + v_t$$
-$$v_t \sim \mathcal{N}(0, \sigma^2)$$
+$$z_t = z_{t-1} + v_t$$ $$v_t \sim \mathcal{N}(0, \sigma^2)$$
 
-* The predictors $w_1$, $w_2$, $w_3$ should not affect $z_t$
+-   The predictors $w_1$, $w_2$, $w_3$ should not affect $z_t$
 
 <br>
 
@@ -511,8 +486,6 @@ z <- arima.sim(list(order = c(0,1,0)), n = 200, sd=5, mean=0)
 
 df_nonstationary <- data.frame(z=z, w1=w1, w2=w2, w3=w3, t=1:length(z))
 ```
-
-
 
 ## Plot simulated data (Train)
 
@@ -542,23 +515,23 @@ train_ns <- head(df_nonstationary, 150)
 test_ns <- tail(df_nonstationary, 52) # helps with plotting
 ```
 
-## OLS ignores non-stationary errors
+## OLS ignores non-stationarity
 
-
-:::::::::::::: {.columns}
-::: {.column}
+::: columns
+::: column
 ```{r}
 lm_mod_ns <- lm(z ~ w1 + w2 + w3, data=train_ns)
 
 knitr::kable(tidy(lm_mod_ns))
 ```
 :::
-::: {.column}
+
+::: column
 ```{r}
 knitr::kable(glance(lm_mod_ns)[,1:2])
 ```
 :::
-::::::::::::::
+:::
 
 ## Test Set Error Explodes
 
@@ -592,18 +565,16 @@ ggplot(test_plot_ns, aes(x=t, y=value, color=variable, lty=variable)) +
 
 ## Non-stationarity is a very big problem
 
-:::::::::::::: {.columns}
-::: {.column}
+::: columns
+::: column
+-   Simulate $K = `r Ksim`$ data sets where the response and predictors are independent random walks (non-stationary)
 
-* Simulate $K = `r Ksim`$ data sets where the response and predictors are independent random walks (non-stationary)
+-   OLS inferences are highly unreliable
 
-* OLS inferences are highly unreliable
-
-* OLS and GLS both perform worse than a naive model (i.e., take the last response from the training set and assume the response never changes in the test set)
-
+-   OLS and GLS both perform worse than a naive model (i.e., take the last response from the training set and assume the response never changes in the test set)
 :::
-::: {.column}
 
+::: column
 ```{r}
 doOneSimulationNS <- function(randomSeed=2013, alpha=0.10) {
   set.seed(randomSeed) 
@@ -667,12 +638,14 @@ doOneSimulationNS <- function(randomSeed=2013, alpha=0.10) {
   test_plot$gls <- gls_pred
   test_plot$rw <- rw_pred
   
-  test_mse_lm <- data.frame(method='lm', Test_MSE = mse(actual=test_plot$z,
-                                                           predicted=test_plot$ols))
-  test_mse_gls <- data.frame(method='gls', Test_MSE = mse(actual=test_plot$z,
-                                                             predicted=test_plot$gls))
-  test_mse_rw <- data.frame(method='rw', Test_MSE = mse(actual=test_plot$z,
-                                                             predicted=test_plot$rw))
+  test_mse_lm <- data.frame(method='lm', Test_MSE = mse(actual=test_plot$z, predicted=test_plot$ols),
+                            Train_MSE = mse(actual=trainNS$z, lm_mod_ns$fitted.values))
+  
+  test_mse_gls <- data.frame(method='gls', Test_MSE = mse(actual=test_plot$z, predicted=test_plot$gls),
+                             Train_MSE = mse(actual=trainNS$z, predicted=gls_mod_ns$fitted))
+  
+  test_mse_rw <- data.frame(method='rw', Test_MSE = mse(actual=test_plot$z, predicted=test_plot$rw),
+                            Train_MSE=NA)
   
   test_mse <- bind_rows(test_mse_lm, test_mse_gls, test_mse_rw)
   
@@ -698,42 +671,38 @@ future:::ClusterRegistry("stop")
 tblNS <- allSimulationsNS %>% 
   group_by(method) %>% 
   summarize(Prob_Type_1_Error = mean(Type1ErrorFlag),
+            Avg_Train_RMSE = sqrt(mean(Train_MSE)),
             Avg_Test_RMSE = sqrt(mean(Test_MSE)),
             .groups = 'drop') %>% 
   arrange(Prob_Type_1_Error) 
 
 knitr::kable(tblNS, digits=3)
 ```
-
 :::
-::::::::::::::
+:::
 
+## Remediating non-stationarity
 
+1.  Transform each response and/or predictor into "first differences" (e.g., $y_t - y_{t-1}$)
+2.  Estimate the transformed model using OLS or GLS
+3.  Forecast with the last historical value and the cumulative sum of the predicted first differences:
 
-## Remediating non-stationary errors
-
-1. Transform each response and predictor into "first differences" (e.g., $y_t - y_{t-1}$)
-2. Estimate the transformed model using OLS or GLS
-3. Forecast with the last historical value and the cumulative sum of the predicted first differences:
-  
 $\widehat{y_{t+h}} = y_t + \sum_{i=t+1}^{t+h}{\widehat{\Delta{y_i}}}$
 
 ## Conclusions
 
-* OLS is most suitable for independent errors
+-   OLS is most suitable for independent errors
 
-* The independent error assumption is often violated with time series regression
+-   The independent error assumption is often violated with time series regression
 
-* Under serial correlation, standard errors and p-values from OLS are unreliable
+-   Under serial correlation, standard errors and p-values from OLS are unreliable
 
-* Fortunately, OLS coefficient estimates remain unbiased and consistent
+-   Fortunately, OLS coefficient estimates remain unbiased and consistent
 
-* Remediating serial correlation:
-  - GLS
-  - OLS with HAC standard errors
-  - OLS with block bootstrapped standard errors
-  
-* Under non-stationary errors, beware of spurious regressions
+-   Remediating serial correlation:
 
+    -   GLS
+    -   OLS with HAC standard errors
+    -   OLS with block bootstrapped standard errors
 
-
+-   Under non-stationary errors, beware of spurious regressions
